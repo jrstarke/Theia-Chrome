@@ -1,6 +1,6 @@
 {
   "name": "Theia",
-  "version": "1.0",
+  "version": "0.1.0",
   "description": "A Tool for collecting Web Navigation activities for research purposes.",
   "background_page": "control_pages/background.html",
   "update_url": "https://keg.cs.uvic.ca/collector/chisel/chrome-update.php",
