@@ -1,0 +1,31 @@
+{
+  "name": "Theia",
+  "version": "1.0",
+  "description": "A Tool for collecting Web Navigation activities for research purposes.",
+  "background_page": "control_pages/background.html",
+  "update_url": "https://keg.cs.uvic.ca/collector/chisel/chrome-update.php",
+  "permissions": [
+    "http://*/*",
+    "https://*/*",
+    "unlimitedStorage",
+    "tabs"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+      "http://google.com/*",
+      "http://google.ca/*",
+      "http://*.google.com/*",
+      "http://*.google.ca/*",
+      "https://keg.cs.uvic.ca/*",
+      "http://*/*",
+      "https://*/*"
+      ],
+	  	  
+      "js": [
+	    "jquery/js/jquery-1.4.4.min.js",
+	    "js/main_inject.js"
+      ]
+    }
+  ]
+}

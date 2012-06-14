@@ -1,0 +1,294 @@
+<html>
+<script type="text/javascript" src="/jquery/js/jquery-1.4.4.min.js"></script>
+<script type="text/javascript">
+
+	// Server Base Path, to decide how to relate to the server command pages
+	var serverBase = "https://keg.cs.uvic.ca/collector";
+
+	// This defines how much time between submits
+	//var submitInterval = 1 * 1000 * 60 * 60 * 24;
+	//var submitInterval = 1000*60*60;
+	var submitInterval = 1000 * 60 * 30; // Submit half hourly
+
+	// This defines the group id (ie. Company, Open Source Group, etc)
+	var gid = 5;
+
+	debug = true;
+	function l(msg) {
+		if (debug)
+			console.log(msg);
+	}
+
+	chrome.extension.onRequest.addListener(function(request, sender,
+			sendResponse) {
+		if (request.command == "logQuery")
+			logQuery(request);
+		else if (request.command == "logClick")
+			logClick(request);
+		else if (request.command == "logNavigation")
+			logNavigation(request);
+		else if (request.command == "setPID")
+			sendResponse(setPID(request));
+		else if (request.command == "getBlacklist")
+			sendResponse(getBlacklist())
+		else if (request.command == "submitErrorReport")
+			submitErrorReportRaw(request);
+	});
+
+	// Add a query to our log, and store it in the local storage till the
+	// next submit
+	function logQuery(request) {
+		var timestamp = new Date().getTime();
+
+		var queries = window.localStorage.getItem("queries");
+		if (queries) {
+			queries = JSON.parse(queries);
+			queries.push({
+				timestamp : timestamp + '',
+				site : request.site,
+				query : request.query,
+				page : request.page
+			});
+		} else
+			queries = [ {
+				timestamp : timestamp + '',
+				site : request.site,
+				query : request.query,
+				page : request.page
+			} ];
+
+		window.localStorage.setItem("queries", JSON.stringify(queries));
+	}
+
+	// Add a click to our log, and store it in the local storage till the 
+	// next submit
+	function logClick(request) {
+		l("Click ACK");
+		request.title = replaceWithSimple(request.title);
+
+		var timestamp = new Date().getTime();
+
+		var clicks = window.localStorage.getItem("clicks");
+		if (clicks) {
+			clicks = JSON.parse(clicks);
+			clicks.push({
+				timestamp : timestamp + '',
+				site : request.site,
+				query : request.query,
+				title : request.title,
+				url : request.url,
+				page : request.page
+			});
+		} else
+			clicks = [ {
+				timestamp : timestamp + '',
+				site : request.site,
+				query : request.query,
+				title : request.title,
+				url : request.url,
+				page : request.page
+			} ];
+
+		window.localStorage.setItem("clicks", JSON.stringify(clicks));
+	}
+
+	function logNavigation(request) {
+		l("Navigation ACK");
+
+		request.title = replaceWithSimple(request.title);
+
+		var timestamp = new Date().getTime();
+
+		var navigations = window.localStorage.getItem("navigations");
+		if (navigations) {
+			navigations = JSON.parse(navigations);
+			navigations.push({
+				timestamp : timestamp + '',
+				title : request.title,
+				url : request.url,
+				referrer : request.referrer
+			});
+		} else
+			navigations = [ {
+				timestamp : timestamp + '',
+				title : request.title,
+				url : request.url,
+				referrer : request.referrer
+			} ];
+
+		window.localStorage.setItem("navigations", JSON.stringify(navigations));
+	}
+
+	function setPID(pid) {
+		window.localStorage.setItem("partID", pid.pid);
+
+		ret = {
+			error : false
+		}
+		return ret;
+	}
+
+	function setBlacklist(blacklist) {
+		window.localStorage.setItem("blacklist", blacklist);
+	}
+
+	function getBlacklist() {
+		var blacklist = window.localStorage.getItem("blacklist");
+
+		if (blacklist)
+			blacklist = JSON.parse(blacklist);
+		else
+			blacklist = null;
+
+		return blacklist;
+	}
+
+	// Fires the data across the line to the server over https
+	function submitData() {
+		var queries = window.localStorage.getItem("queries");
+		var clicks = window.localStorage.getItem("clicks");
+		var navigations = window.localStorage.getItem("navigations");
+		var pid = window.localStorage.getItem("partID");
+
+		// See if we actually have enough to submit, if not, wait.
+		if (queries || clicks || navigations)
+			$.post(serverBase + "/collect-json.php", {
+				queries : queries,
+				clicks : clicks,
+				navigations : navigations,
+				pid : pid,
+				gid : gid
+			},
+					function(data) {
+						data = JSON.parse(data);
+						// Get the latest queries and create a new list without those we stored
+						if (data.storedQueries)
+							removeElementsFromStoredList("queries",
+									data.storedQueries);
+
+						// Get the latest clicks and create a new list without those we stored
+						if (data.storedClicks)
+							removeElementsFromStoredList("clicks",
+									data.storedClicks);
+
+						// Get the latest navigations and create a new list those we just stored
+						if (data.storedNavigations)
+							removeElementsFromStoredList("navigations",
+									data.storedNavigations);
+
+						// Update the blacklist based on the up to date info
+						if (data.blacklist)
+							window.localStorage.setItem("blacklist", JSON
+									.stringify(data.blacklist));
+
+						var timestamp = new Date().getTime();
+						window.localStorage.setItem("lastSubmit", timestamp)
+					});
+	}
+
+	function replaceWithSimple(text) {
+		var before = text;
+		text = text.replace(/[^a-zA-Z0-9\s\-=+\|!@#$%^&*()~;:,<.>\/?]+/g, '_');
+		if (!before == text)
+			l("replaceWithSimple: before: '" + before + "' After: '" + text
+					+ "'");
+		return text;
+	}
+
+	// A wrapper to the other submit error report
+	function submitErrorReportRaw(request) {
+		submitErrorReport(request.context, request.site, request.exception);
+	}
+
+	// Submits an error report to the server
+	function submitErrorReport(context, site, exception) {
+		var pid = window.localStorage.getItem("partID");
+		// var gid = just use the global one;
+		// var context is the one above
+		var message = exception.name + " " + exception.message;
+		var stack = exception.stack;
+
+		l("Error Context: " + context + " Exception: " + message + ". Stack: "
+				+ exception.stack);
+		context = "Chrome: " + context;
+		$.post(serverBase + "/error-json.php", {
+			pid : pid,
+			gid : gid,
+			site : site,
+			context : context,
+			message : message,
+			stack : stack
+		}, function(response) {
+			l("Error sent. Response: " + response);
+		});
+	}
+
+	// Takes the name of a list that is stored, removes the given elements
+	// and stores it again
+	function removeElementsFromStoredList(listName, elements) {
+		var list = window.localStorage.getItem(listName);
+		var jsonList = JSON.parse(list);
+		jsonList = listFromListWithoutElements(jsonList, elements)
+		if (jsonList.length > 0) {
+			list = JSON.stringify(jsonList);
+			window.localStorage.setItem(listName, list);
+		} else
+			window.localStorage.removeItem(listName);
+	}
+
+	// Takes a list and a set of element ids, and creates a new liwt without
+	// those elements
+	function listFromListWithoutElements(list, elementIDs) {
+		elementIDs.sort();
+
+		var pointer = 0;
+		var newList = new Array();
+		for ( var i = 0; i < list.length; i++) {
+			if ((pointer >= elementIDs.length)
+					|| (pointer < elementIDs.length && list[i] < elementIDs[pointer]))
+				newList.push(list[i]);
+			else
+				pointer++;
+		}
+		return newList;
+	}
+
+	// Grab the blacklist from the server for the set group id, and set it locally
+	function initBlacklist() {
+		$.post(serverBase + '/blacklist.php', {
+			gid : gid
+		}, function(data) {
+			if (data) {
+				setBlacklist(data);
+			}
+		});
+	}
+
+	// At the specified interval, make sure we have a participant id
+	// and submit any data we have. If no PID yet, get one
+	function timeCheck() {
+		try {
+			if (!window.localStorage.getItem("blacklist"))
+				initBlacklist();
+			if (window.localStorage.getItem("partID")) {
+				var cTimestamp = new Date().getTime();
+				var lTimestamp = window.localStorage.getItem("lastSubmit");
+				if (!lTimestamp)
+					window.localStorage.setItem("lastSubmit", cTimestamp);
+				if (cTimestamp - lTimestamp > submitInterval)
+					submitData();
+			} else {
+				chrome.windows.create({
+					url : serverBase + "/init.php",
+					type : "popup"
+				});
+			}
+		} catch (e) {
+			submitErrorReport("During timeCheck", null, e);
+		}
+	}
+
+	timeCheck();
+	setInterval("timeCheck()", submitInterval);
+</script>
+</html>
